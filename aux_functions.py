@@ -4,12 +4,44 @@ from datetime import datetime
 from datetime import timedelta
 import random
 import math
+import pickle
+import xgboost as xgb
 
 from copy import copy
 
-#data cleaning function
-def clean_df(input_df, cols):
+model = pickle.load(open('xgb_model.sav', 'rb'))
+
+
+# get intial population for GA
+def get_init_pop(x, num):
+    hold = []
+    pop = list(range(x))
+
+    for i in range(num):
+        hold.append((random.sample(pop, x)))
+
+    return (hold)
+
+#setup function to only keep columns we want
+def setup(x):
+    hold = pd.concat([x, x.shift(-1)], axis = 1).dropna()
+    hold.columns = ['pickup_longitude', 'pickup_latitude', 'dropoff_longitude', 'dropoff_latitude']
+    return(hold)
+
+
+def clean_df(input_df):
     df = input_df
+
+    col_list = ['pickup_longitude',
+                'pickup_latitude',
+                'dropoff_longitude',
+                'dropoff_latitude',
+                'trip_duration',
+                'pickup_minute',
+                'pickup_hour',
+                'pickup_month',
+                'pickup_day',
+                'pickup_weekday']
 
     # changing datetime column to datetime class
     df['pickup_datetime_hold'] = pd.to_datetime(df['pickup_datetime'])
@@ -29,9 +61,16 @@ def clean_df(input_df, cols):
     # adding day of week column
     df['pickup_weekday'] = df.apply(lambda x: datetime.weekday(x.pickup_datetime_hold), axis=1)
 
-    return (df[df.columns.intersection(cols)])
+    return (df[df.columns.intersection(col_list)])
 
-#converting seconds into hour, minutes, seconds, microseconds
+#prepare dataframe to be inputted into model
+def set_model_input(x, ind, time):
+    hold = x.iloc[ind].to_frame().T
+    hold['pickup_datetime'] = time
+    return(clean_df(hold))
+
+
+# converting seconds into hour, minutes, seconds, microseconds
 def convert(start_time, add):
     add = add % (24 * 3600)
     hour = add // 3600
@@ -40,12 +79,6 @@ def convert(start_time, add):
     add %= 60
 
     return (start_time + timedelta(seconds=add, minutes=minutes, hours=hour))
-
-#setup function to only keep columns we want
-def setup(x):
-    hold = pd.concat([x, x.shift(-1)], axis = 1).dropna()
-    hold.columns = ['pickup_longitude', 'pickup_latitude', 'dropoff_longitude', 'dropoff_latitude']
-    return(hold)
 
 
 # return total time of a set of trips
@@ -56,7 +89,7 @@ def get_total_time(x, start_time):
     time_total = [0] * len(temp)
 
     for i in range(len(temp)):
-        hold = set_input(temp, i, start_time_hold, col_list)
+        hold = set_model_input(temp, i, start_time_hold)
         trip_dur = (np.exp(model.predict(xgb.DMatrix(hold))) - 1)[0]
         time_total[i] = trip_dur
         start_time_hold = convert(start_time_hold, trip_dur)
@@ -64,25 +97,14 @@ def get_total_time(x, start_time):
     return (sum(time_total))
 
 
-# get intial population for GA
-def get_init_pop(x, num):
-    hold = []
-    pop = list(range(x))
-
-    for i in range(num):
-        hold.append((random.sample(pop, x)))
-
-    return (hold)
-
-
 # prepare/rank intial population
-def rank(input_pop):
+def rank(input_pop, orig_pts, datetime):
     hold_df = pd.DataFrame(input_pop)
 
     total_time_hold = [0] * len(input_pop)
 
     for i in range(len(input_pop)):
-        total_time_hold[i] = get_total_time(temp.reindex(input_pop[i]), x)
+        total_time_hold[i] = get_total_time(orig_pts.reindex(input_pop[i]), datetime)
 
     # add total time column / fitness
     hold_df['total_time'] = total_time_hold
@@ -105,7 +127,7 @@ def get_parent(input_df):
     parent = input_df.reindex(which_parent).iloc[:,:num_chrom].to_numpy()
     return(parent)
 
-
+#cross parent chromosomes
 def cross(parent1, parent2):
     # how many chromosomes we want to keep from each parent
     num_parent = len(parent1)
@@ -144,16 +166,37 @@ def cross(parent1, parent2):
     # add them together as a cross
     return (np.add(new_parent1, new_parent2))
 
-
+#getting the next generation
 def get_next_gen(input_df):
-    #choose parents
     p1 = get_parent(input_df)
     p2 = get_parent(input_df)
-
-    #cross
-    return (cross(p1, p2))
-
+    next_gen = np.subtract(cross(p1, p2),1)
+    return(next_gen)
 
 #this is a supplmentary function which will help with our threshold
 def condense (input_df):
     return(input_df.groupby(list(set(input_df.columns) - set(['rank', 'chance']))).sum().reset_index())
+
+
+def rank_test(input_pop, orig_pts, datetime):
+    hold_df = pd.DataFrame(input_pop)
+    condensed = hold_df.drop_duplicates()
+
+    total_time_hold = [0] * len(condensed)
+
+    for i in range(len(condensed)):
+        total_time_hold[i] = get_total_time(orig_pts.reindex(input_pop[i]), datetime)
+
+    # add total time column / fitness
+    condensed['total_time'] = total_time_hold
+
+    joined_df = pd.merge(hold_df, condensed, how='left', on=list(hold_df.columns))
+
+    # add rank column which gives the highest rank to the combination with the lowest total trip duration
+    joined_df['rank'] = len(joined_df) - joined_df['total_time'].rank() + 1
+
+    # add chance column which uses rank to calculate probability of being chosen as a parent
+    ##higher fitness means higher chance of breeding
+    joined_df['chance'] = joined_df['rank'] * 2 / (len(joined_df) * (len(joined_df) + 1))
+
+    return (joined_df)
