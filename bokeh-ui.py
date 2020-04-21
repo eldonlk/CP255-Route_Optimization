@@ -25,28 +25,8 @@ import numpy as np
 import math
 from itertools import cycle
 
-#bokeh serve --show test2.py
-# curdoc().theme = 'dark_minimal'
-
 street_map = gpd.read_file('shp/hold/geo_export_0a23a24b-8a75-4a43-b238-df5c9996dcf4.shp')
 street_source = GeoJSONDataSource(geojson=street_map.to_json())
-
-# def getLineCoords(row, geom, coord_type):
-#     """Returns a list of coordinates ('x' or 'y') of a LineString geometry"""
-#     if coord_type == 'x':
-#         return list( row[geom].coords.xy[0] )
-#     elif coord_type == 'y':
-#         return list( row[geom].coords.xy[1] )
-#
-# # Calculate x coordinates of the line
-# street_map['lon'] = street_map.apply(getLineCoords, geom='geometry', coord_type='x', axis=1)
-#
-# # Calculate y coordinates of the line
-# street_map['lat'] = street_map.apply(getLineCoords, geom='geometry', coord_type='y', axis=1)
-#
-# sm_df = street_map.drop('geometry', axis=1).copy()
-# print(sm_df.head())
-# smsource = ColumnDataSource(sm_df)
 
 coordList=[]
 
@@ -62,8 +42,6 @@ output = ColumnDataSource(pd.DataFrame({'order' : [], 'total_time' : [], 'chance
 timeseries = ColumnDataSource(pd.DataFrame({'order' : [], 'chance' : [], 'gen' : []}))
 data_dict = {'x': [],'y': [], 'color': []}
 source_table_hist = ColumnDataSource(data=data_dict)
-
-
 
 palette = ['#084594', '#2171b5', '#4292c6', '#6baed6', '#9ecae1', '#c6dbef', '#deebf7', '#f7fbff']
 
@@ -133,8 +111,6 @@ h = figure(x_range=data_dict['x'],
 h.vbar(x ='x',
        top ='y',
        width = .7,
-       # fill_color="#990F02",
-       # line_color='black',
        color='color',
        source=source_table_hist)
 
@@ -196,16 +172,6 @@ def solve():
     table_data = hold.groupby(['order', 'total_time', 'gen']).sum().reset_index()
     table_data = table_data.sort_values(['gen', 'chance'], ascending=[False, False])
     output.data = table_data[['order', 'total_time', 'chance', 'gen']]
-
-    #line plotting update
-    # plot_order = af.condense(hold.tail(init_pop)).sort_values('total_time').iloc[0, 0:len(hold.columns) - 5]
-    # plot_dat = visit_points.reindex(plot_order)
-    # fullplotdat = pd.DataFrame(start_loc.append(plot_dat)).reset_index()
-    # p.line(x = fullplotdat['latitude'],
-    #        y = fullplotdat['longitude'],
-    #        line_width = 2,
-    #        color = '#6baed6',
-    #        name = 'line')
 
     plot_order = af.condense(hold.tail(init_pop)).sort_values('total_time').iloc[0, 0:len(hold.columns) - 5]
     plot_dat = visit_points.reindex(plot_order)
@@ -355,12 +321,6 @@ dt_pckr = DatePicker(title='Start Date',
                      width = 400)
 dt_pckr.on_change('value', update_date)
 
-# hour_input = Slider(start = 1, end = 24, value=0, step=1, title="Hour")
-# hour_input.on_change('value', update_hour)
-#
-# minute_input = Slider(start = 0, end = 60, value=0, step=1, title="Minute")
-# minute_input.on_change('value', update_minute)
-
 table1_title = Div(text="""<b>Inputted Locations</b>""")
 table2_title = Div(text="""<b>History</b>""")
 table2_title = Div(text="""<b>History</b>""")
@@ -372,8 +332,6 @@ layout = Row(Column(p,
                     ),
              Column(
                     Row(dt_pckr, select_hour, select_minute, select_ampm),
-                    # hour_input,
-                    # minute_input,
                     population_size_input,
                     generation_input,
                     table1_title,
