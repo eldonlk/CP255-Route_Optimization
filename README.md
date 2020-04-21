@@ -1,7 +1,8 @@
 # Route_Optimization
 Route Optimization Using Taxi Data, Gradient Boosting, and Genetic Algorithms.<br />
 Visulization/Dashboard created with Bokeh.<br />
-Required Libraries
+<br />
+Required Libraries:
 * Numpy
 * Pandas
 * GeoPandas
