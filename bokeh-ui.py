@@ -13,6 +13,7 @@ from bokeh.models import ColumnDataSource, \
     HoverTool, \
     GeoJSONDataSource, \
     Select
+from bokeh.tile_providers import get_provider, Vendors
 from bokeh.palettes import Viridis
 from bokeh.io import curdoc
 from bokeh.events import DoubleTap
@@ -20,17 +21,17 @@ import pandas as pd
 import geopandas as gpd
 from datetime import datetime, timedelta
 import aux_functions as af
-from bokeh.themes import built_in_themes
+from bokeh.themes import built_in_themes, Theme
 import numpy as np
 import math
 from itertools import cycle
-
-street_map = gpd.read_file('shp/hold/geo_export_0a23a24b-8a75-4a43-b238-df5c9996dcf4.shp')
-street_source = GeoJSONDataSource(geojson=street_map.to_json())
+from pyproj import Proj, transform
 
 coordList=[]
+newcoordList = []
 
 source = ColumnDataSource(pd.DataFrame(data=dict(x=[], y=[])))
+ssource = ColumnDataSource(pd.DataFrame(data=dict(x=[], y=[])))
 line_source = ColumnDataSource(pd.DataFrame({'latitude' : [], 'longitude' : []}))
 initpop = ColumnDataSource(pd.DataFrame({'init_pop' : [10]}))
 numgens = ColumnDataSource(pd.DataFrame({'num_gens' : [5]}))
@@ -43,6 +44,7 @@ timeseries = ColumnDataSource(pd.DataFrame({'order' : [], 'chance' : [], 'gen' :
 data_dict = {'x': [],'y': [], 'color': []}
 source_table_hist = ColumnDataSource(data=data_dict)
 
+
 palette = ['#084594', '#2171b5', '#4292c6', '#6baed6', '#9ecae1', '#c6dbef', '#deebf7', '#f7fbff']
 
 #graph base
@@ -52,21 +54,13 @@ p = figure(
     width=700,
     height=700,
     name = 'base',
-    tools = ['tap, wheel_zoom, reset, pan']
-    # tooltips=TOOLTIPS
-    # x_range=(-74.5, -73.5),
-    # y_range=(40, 41)
+    tools = ['tap, wheel_zoom, reset, pan'],
+    x_range=(-8210000, -8270000), y_range=(4940000, 5000000),
+    x_axis_type="mercator",
+    y_axis_type="mercator"
            )
 
-#map of NYC
-p.multi_line('xs',
-             'ys',
-             source=street_source,
-             color='gray',
-             line_width=.5,
-             alpha = .7,
-             name="map"
-             )
+p.add_tile(get_provider(Vendors.CARTODBPOSITRON_RETINA), name = 'tiles')
 
 p.title.text = "Route Optimizer"
 p.title.text_font_size = "25px"
@@ -78,31 +72,23 @@ p.circle_cross(source = source,
                x ='x',
                y ='y',
                size=10,
-               # color="#990F02",
                fill_alpha=0.2,
                line_width=2,
                name = 'pts'
                )
 
-p.add_tools(HoverTool(names=['map'],
-                      show_arrow=False,
-                      line_policy='next',
-                      tooltips=[("street:", "@full_stree")]
-                      )
-            )
-
 p.add_tools(HoverTool(names=['pts'],
                       show_arrow=False,
                       line_policy='next',
-                      tooltips=[("lon:", "@x"),
-                                ("lat:", "@y")]
+                      tooltips=[("(lon, lat)", "(@conv)"),
+                                ("index", "@num"),]
                       )
             )
 
 #histogram
 h = figure(x_range=data_dict['x'],
            height = 300,
-           width=700,
+           width=600,
            tools="hover",
            tooltips="@x: @y",
            title="Combination Counts",
@@ -114,7 +100,7 @@ h.vbar(x ='x',
        color='color',
        source=source_table_hist)
 
-h.xaxis.major_label_orientation = 1 #math.pi/2
+h.xaxis.major_label_orientation = 1
 h.xaxis.axis_label = "Order"
 h.yaxis.axis_label = "Count"
 
@@ -124,8 +110,8 @@ l = figure(title="Fitness",
            tools="hover",
            tooltips="@name",
            plot_height = 300,
-           width=700,
-           toolbar_location="above",)
+           width=600,
+           toolbar_location="above")
 
 l.xaxis.axis_label = 'Generation'
 l.yaxis.axis_label = 'Fitness'
@@ -134,22 +120,34 @@ l.yaxis.axis_label = 'Fitness'
 def callback(event):
     Coords=(event.x, event.y)
     coordList.append(Coords)
-    source.data = pd.DataFrame(dict(x=[i[0] for i in coordList], y=[i[1] for i in coordList]))
+
+    newCoords = transform(Proj(init='epsg:3857'),
+                          Proj(init='epsg:4326'),
+                          event.x,
+                          event.y)
+    newcoordList.append(newCoords)
+
+    source.data = pd.DataFrame(dict(x=[i[0] for i in coordList],
+                                    y=[i[1] for i in coordList],
+                                    conv = [(round(i[0],2),round(i[1],2)) for i in newcoordList],
+                                    num = [i for i in range(len(newcoordList))]))
+
+    ssource.data = pd.DataFrame(dict(x=[i[0] for i in newcoordList], y=[i[1] for i in newcoordList]))
 
 def solve():
     print('start')
 
+    #clear lines
+    line_source.data = {k: [] for k in line_source.data}
+
     #prepare inputs
     start_date = pd.DataFrame(date.data)['date'][0]#.to_pydatetime()
-    print(start_date)
     start_hour = int(pd.DataFrame(hour.data)['hour'][0]) + int(pd.DataFrame(ampm.data)['ampm'][0])
-    print(start_hour)
     start_minute = int(pd.DataFrame(minute.data)['minute'][0])
-    print(start_minute)
     start_date = start_date + timedelta(hours=start_hour) + timedelta(minutes=start_minute)
     init_pop = pd.DataFrame(initpop.data)['init_pop'][0]
     num_gens = pd.DataFrame(numgens.data)['num_gens'][0]
-    points_df = pd.DataFrame(coordList)
+    points_df = pd.DataFrame(newcoordList)
     points_df.columns = ['latitude', 'longitude']
     start_loc = pd.DataFrame(points_df.loc[0]).transpose()
     visit_points = points_df.loc[1:].reset_index()[['latitude', 'longitude']]
@@ -173,12 +171,14 @@ def solve():
     table_data = table_data.sort_values(['gen', 'chance'], ascending=[False, False])
     output.data = table_data[['order', 'total_time', 'chance', 'gen']]
 
+    #line plotting update
     plot_order = af.condense(hold.tail(init_pop)).sort_values('total_time').iloc[0, 0:len(hold.columns) - 5]
-    plot_dat = visit_points.reindex(plot_order)
-    fullplotdat = pd.DataFrame(start_loc.append(plot_dat)).reset_index()
-    line_source.data = fullplotdat
-    p.line(x = 'latitude',
-           y = 'longitude',
+    full_plot_order = [0] + list(plot_order + 1)
+    ordered_points = pd.DataFrame(source.data)
+    ordered_points = ordered_points.reindex(full_plot_order).reset_index(drop=True)
+    line_source.data = ordered_points
+    p.line(x = 'x',
+           y = 'y',
            line_width = 2,
            color = '#6baed6',
            name = 'line',
@@ -204,7 +204,6 @@ def solve():
     timeseries.data = line_data
     l.multi_line(xs ='gen',
                  ys ='chance',
-                 # legend = 'order',
                  line_width=4,
                  line_alpha=0.6,
                  hover_line_alpha=1.0,
@@ -240,8 +239,11 @@ def update_ampm(attr, old, new):
 
 def clear():
     global coordList
+    global newcoordList
     source.data = {k: [] for k in source.data}
+    ssource.data = {k: [] for k in ssource.data}
     coordList = []
+    newcoordList = []
     line_source.data = {k: [] for k in line_source.data}
 
 #data table
@@ -249,9 +251,9 @@ columns = [
         TableColumn(field='x', title='longitude'),
         TableColumn(field='y', title='latitude')
     ]
-data_table = DataTable(source=source,
+data_table = DataTable(source=ssource,
                        columns=columns,
-                       width=700,
+                       width=600,
                        height=150)
 
 columns2 = [
@@ -272,14 +274,14 @@ p.on_event(DoubleTap, callback)
 #optimizer button
 button = Button(label="Optimize",
                 button_type="primary",
-                width = 590
+                width = 600
                 )
 button.on_click(solve)
 
 #reset button
 reset = Button(label="Reset",
                button_type="default",
-               width = 100
+               width = 90
                )
 reset.on_click(clear)
 
@@ -288,7 +290,7 @@ select_hour = Select(title="Hour:",
                      value="8",
                      options=["1", "2", "3", "4", "5", "6",
                                                    "7", "8", "9", "10", "11", "12"],
-                     width = 100)
+                     width = 85)
 select_hour.on_change('value', update_hour)
 
 select_minute = Select(title="Minute:",
@@ -299,26 +301,36 @@ select_minute = Select(title="Minute:",
                                                         "31", "32", "33", "34", "35", "36", "37", "38", "39", "40",
                                                         "41", "42", "43", "44", "45", "46", "47", "48", "49", "50",
                                                         "51", "52", "53", "54", "55", "56", "57", "58", "59"],
-                       width = 100)
+                       width = 85)
 select_minute.on_change('value', update_minute)
 
 select_ampm = Select(title="AM/PM:",
                      value="00",
                      options=["AM", "PM"],
-                     width = 75)
+                     width = 85)
 select_ampm.on_change('value', update_ampm)
 
 #sliders
-population_size_input = Slider(start = 5, end = 100, value=10, step=1, title="Population Size")
+population_size_input = Slider(start = 5,
+                               end = 100,
+                               value=15,
+                               step=1,
+                               width = 600,
+                               title="Population Size")
 population_size_input.on_change('value', update_popsize)
 
-generation_input = Slider(start = 2, end = 100, value=5, step=1, title="Number of Generations")
+generation_input = Slider(start = 2,
+                          end = 100,
+                          value=10,
+                          step=1,
+                          width = 600,
+                          title="Number of Generations")
 generation_input.on_change('value', update_numgen)
 
 dt_pckr = DatePicker(title='Start Date',
                      min_date=datetime(1900,1,1),
                      max_date=datetime.today().replace(year = datetime.today().year + 5),
-                     width = 400)
+                     width = 310)
 dt_pckr.on_change('value', update_date)
 
 table1_title = Div(text="""<b>Inputted Locations</b>""")
